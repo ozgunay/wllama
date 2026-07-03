@@ -412,6 +412,15 @@ struct wllama_context
     params.n_ctx = req.n_ctx.value;
     params.cpuparams.n_threads = req.n_threads.value;
     params.cpuparams_batch.n_threads = req.n_threads.value;
+
+    // Disable the host-RAM prompt cache (prompt_save/prompt_load). It doubles
+    // memory use by copying multi-hundred-MB KV states into the wasm heap for
+    // little benefit in a single-user browser session (the active slot still
+    // reuses common prefixes), and a request rejected with
+    // ERROR_TYPE_EXCEED_CONTEXT_SIZE leaves slot.prompt.tokens pointing at
+    // never-decoded tokens; saving and later restoring that mismatched state
+    // corrupts the heap and hangs the next request inside malloc.
+    params.cache_ram_mib = 0;
     if (req.embeddings.not_null())
       params.embedding = req.embeddings.value;
     if (req.n_batch.not_null())
