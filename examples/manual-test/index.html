@@ -72,9 +72,11 @@
       const blob = await resp.blob();
       log('model_fetch', true, `${(blob.size / 1e6).toFixed(0)}MB in ${((performance.now() - t0) / 1000).toFixed(1)}s`);
       const t1 = performance.now();
+      const nThreads = params.has('threads') ? Number(params.get('threads')) : undefined;
       await wllama.loadModel([blob], {
         n_ctx: 2048,
         n_gpu_layers: gpuLayers,
+        ...(nThreads ? { n_threads: nThreads } : {}),
       });
       log('model_load', true, `${((performance.now() - t1) / 1000).toFixed(1)}s`);
 
