@@ -24,3 +24,6 @@ a.out.wasm
 
 /compat/wasm/*.wasm
 /src/wasm/*.wasm
+
+# local GGUF models for manual testing
+/.dev-models

@@ -15,6 +15,9 @@ services:
       - SKIP_COMPAT=${SKIP_COMPAT:-}
     volumes:
       - ..:/source:Z
+      # /source/llama.cpp is a junction to C:\Work\llama.cpp, which the container
+      # resolves to this path; without the mount the link dangles and cmake fails
+      - ../../llama.cpp:/mnt/host/c/Work/llama.cpp:Z
     entrypoint: /bin/bash
     command:
       - -c
