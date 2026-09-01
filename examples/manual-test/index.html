@@ -10,9 +10,12 @@
   <pre id="log" style="white-space: pre-wrap; font-size: 12px;"></pre>
 
   <script type="module">
-    import { Wllama } from '/esm/index.js';
-
     const params = new URLSearchParams(location.search);
+    if ((params.get('mode') || 'compat64') === 'compat64') {
+      // hide JSPI so needCompat() is true and the compat build really loads
+      delete WebAssembly.Suspending;
+    }
+    const { Wllama } = await import('/esm/index.js');
     // 'compat64' = forced Asyncify+wasm64+WebGPU build, 'main' = JSPI build
     const mode = params.get('mode') || 'compat64';
     const gpuLayers = params.has('gpu') ? Number(params.get('gpu')) : 99;
@@ -56,18 +59,26 @@
             worker: '/compat/wasm/wllama.js',
             mem64: true,
           },
-          'force'
+          'firefox_safari'
         );
       } else {
         wllama.setCompat(null);
       }
-      log('setup', true, `mode=${mode}`);
+      // never let a silent fallback pass as a compat run
+      const res = wllama.proxy?.resources ?? wllama.getWorkerResources?.();
+      const usingCompat = !!res?.compat;
+      const usingMem64 = !!res?.mem64;
+      if (mode === 'compat64') {
+        log('setup', usingCompat && usingMem64,
+          `compat=${usingCompat} mem64=${usingMem64} wasm=${res?.wasmPath ?? '?'}`);
+        if (!usingCompat) throw new Error('compat build was NOT selected');
+      } else {
+        log('setup', !usingCompat, `mode=main compat=${usingCompat} mem64=${usingMem64}`);
+      }
 
-      // ── Model load (this is where the JSPI build crashes) ────────────
-      // Plain fetch + loadModel([blob]) — same path agentop uses; avoids
-      // ModelManager's parallel range requests (python http.server chokes).
-      // ?via=url switches to loadModelFromUrl: a single Response.blob() cannot
-      // hold a model over ~2GB, so bigger files need the chunked loader.
+      // ── Model load ────────────────────────────────────────────────────
+      // Plain fetch + loadModel([blob]) is the path agentop uses.
+      // ?via=url switches to loadModelFromUrl (ModelManager, chunked+cached).
       const t0 = performance.now();
       const modelFile = params.get('model') || 'qwen3-0.6b-q8_0.gguf';
       const modelUrl = '/.dev-models/' + modelFile;
