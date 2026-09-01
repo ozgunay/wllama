@@ -149,8 +149,14 @@ export const isMmproj = async (blob: Blob): Promise<boolean> => {
 
 export const delay = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
-export const absoluteUrl = (relativePath: string) =>
-  new URL(relativePath, document.baseURI).href;
+export const absoluteUrl = (relativePath: string): string => {
+  // already absolute; resolving a data: or blob: URL against a file:// baseURI
+  // corrupts it
+  if (/^(https?|blob|data):/.test(relativePath)) return relativePath;
+  return typeof document === 'undefined'
+    ? new URL(relativePath, self.location.href).href
+    : new URL(relativePath, document.baseURI).href;
+};
 
 export const padDigits = (number: number, digits: number) => {
   return (
@@ -345,6 +351,11 @@ export const createWorker = (workerCode: string | Blob): Worker => {
       ? new Blob([workerCode], { type: 'text/javascript' })
       : (workerCode as Blob)
   );
+  // module workers are not allowed from a file:// page, where the blob worker
+  // inherits the opaque origin; a classic worker still runs
+  if (location.protocol === 'file:') {
+    return new Worker(workerURL);
+  }
   return new Worker(workerURL, { type: 'module' });
 };
 
@@ -397,7 +408,13 @@ export const cbToAsyncIter =
  * Check if we can use async file read, where the wasm env can asynchronously read a Blob.
  * Please refer to README-dev.md for more details.
  */
-export const canUseAsyncFileRead = (compat: boolean) =>
-  isSupportJSPI() || compat;
+export const canUseAsyncFileRead = (compat: boolean, mem64?: boolean) => {
+  // Asyncify + MEMORY64 breaks emscripten's EM_ASYNC_JS unwind/rewind glue:
+  // i64 args cross the invoke_*/dynCall trampolines as plain Numbers. A wasm64
+  // compat build must load through heapfs instead. The old 2GB ftell limit
+  // does not apply there, because long is 64-bit in wasm64.
+  if (compat && (mem64 ?? false)) return false;
+  return isSupportJSPI() || compat;
+};
 
 export const needCompat = () => !isSupportJSPI() || !isSupportMem64();

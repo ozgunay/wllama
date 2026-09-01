@@ -1,0 +1,114 @@
+<!DOCTYPE html>
+<html>
+<head><meta charset="UTF-8" /><title>min repro: hang after context-exceeded error</title></head>
+<body>
+  <pre id="log" style="white-space: pre-wrap; font-size: 12px;"></pre>
+  <script type="module">
+    import { Wllama } from '/esm/index.js';
+    const params = new URLSearchParams(location.search);
+    const nCtx = Number(params.get('ctx') || 2048);
+    const cachePrompt = params.get('cache') !== '0'; // ?cache=0 → cache_prompt:false on request B
+    const useStream = params.get('stream') === '1';  // stream all requests
+    const useTools = params.get('tools') === '1';    // attach tools to all requests
+    const bigB = params.get('bigB') === '1';         // request B large-but-fitting, shares prefix with A
+    const results = { steps: [], done: false, ok: false };
+    window.__TEST_RESULTS = results;
+    const logEl = document.getElementById('log');
+    const log = (s, ok, d) => {
+      const line = `[TEST] ${ok ? 'PASS' : 'FAIL'} ${s}${d ? ' — ' + String(d).slice(0, 220) : ''}`;
+      console.log(line); logEl.textContent += line + '\n';
+      results.steps.push({ s, ok, d: String(d ?? '').slice(0, 300) });
+    };
+
+    // ~2400 tokens of filler to guarantee request A exceeds n_ctx=2048
+    const FILLER = Array.from({ length: 400 }, (_, i) =>
+      `Fact ${i}: the quick brown fox number ${i} jumps over the lazy dog while measuring statistical correlations in quarterly sales data.`
+    ).join(' ');
+
+    const TOOLS = [
+      { type: 'function', function: { name: 'get_data_summary', description: 'Get dataset summary.', parameters: { type: 'object', properties: {}, required: [] } } },
+      { type: 'function', function: { name: 'get_value_counts', description: 'Get value counts for a column.', parameters: { type: 'object', properties: { column: { type: 'string' } }, required: ['column'] } } },
+    ];
+
+    async function completeOnce(wllama, name, messages, extra = {}, timeoutSec = 60) {
+      const t0 = performance.now();
+      const base = {
+        messages, max_tokens: 64, temp: 0,
+        chat_template_kwargs: { enable_thinking: false },
+        ...(useTools ? { tools: TOOLS, tool_choice: 'auto' } : {}),
+        ...extra,
+      };
+      const p = (async () => {
+        if (useStream) {
+          const iter = await wllama.createChatCompletion({ ...base, stream: true });
+          let text = '';
+          for await (const chunk of iter) {
+            text += chunk?.choices?.[0]?.delta?.content || '';
+          }
+          return text;
+        }
+        const r = await wllama.createChatCompletion(base);
+        return r?.choices?.[0]?.message?.content ?? '';
+      })();
+      const wd = new Promise((_, rej) => setTimeout(() => rej(new Error('HANG(' + timeoutSec + 's)')), timeoutSec * 1000));
+      const text = await Promise.race([p, wd]);
+      return { text, secs: ((performance.now() - t0) / 1000).toFixed(1) };
+    }
+
+    async function main() {
+      const wllama = new Wllama({ default: '/src/wasm/wllama.wasm' });
+      wllama.setCompat(null);
+      const blob = await (await fetch('/.dev-models/qwen3-0.6b-q8_0.gguf')).blob();
+      await wllama.loadModel([blob], { n_ctx: nCtx, n_gpu_layers: 99 });
+      log('load', true, 'n_ctx=' + nCtx + ' cachePromptOnB=' + cachePrompt);
+
+      // sanity: small request works
+      const s = await completeOnce(wllama, 'sanity', [{ role: 'user', content: 'Say hi' }]);
+      log('sanity', true, s.text);
+
+      // request A: oversized → expect context-exceeded error
+      try {
+        const a = await completeOnce(wllama, 'oversized', [
+          { role: 'system', content: FILLER },
+          { role: 'user', content: 'Summarize.' },
+        ]);
+        log('oversized_request', false, 'unexpectedly succeeded: ' + a.text.slice(0, 60));
+      } catch (e) {
+        log('oversized_request_errored', true, e.message);
+      }
+
+      // request B: normal-sized — does it hang? With ?bigB=1 it is large but
+      // fitting and shares a long prefix with the failed request A.
+      const bMessages = bigB
+        ? [
+            { role: 'system', content: FILLER.slice(0, Math.floor(FILLER.length * 0.55)) },
+            { role: 'user', content: 'What is 2+2? Answer with one word.' },
+          ]
+        : [{ role: 'user', content: 'What is 2+2? Answer with one word.' }];
+      try {
+        const b = await completeOnce(wllama, 'after-error', bMessages,
+          cachePrompt ? {} : { cache_prompt: false }, 45);
+        log('request_after_error', true, b.secs + 's — ' + b.text);
+      } catch (e) {
+        log('request_after_error', false, e.message);
+      }
+
+      // request C: one more to see if state recovers
+      try {
+        const c = await completeOnce(wllama, 'second-after-error', [
+          { role: 'user', content: 'Name one color.' },
+        ], {}, 45);
+        log('second_after_error', true, c.secs + 's — ' + c.text);
+      } catch (e) {
+        log('second_after_error', false, e.message);
+      }
+
+      results.ok = results.steps.every(x => x.ok);
+    }
+
+    main()
+      .catch(e => log('exception', false, e?.message || e))
+      .finally(() => { results.done = true; console.log('[TEST] DONE ok=' + results.ok); });
+  </script>
+</body>
+</html>

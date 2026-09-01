@@ -15,6 +15,9 @@ services:
       - SKIP_COMPAT=${SKIP_COMPAT:-}
     volumes:
       - ..:/source:Z
+      # /source/llama.cpp is a junction to C:\Work\llama.cpp, which the container
+      # resolves to this path; without the mount the link dangles and cmake fails
+      - ../../llama.cpp:/mnt/host/c/Work/llama.cpp:Z
     entrypoint: /bin/bash
     command:
       - -c
@@ -40,7 +43,7 @@ services:
         fi
 
         emcmake cmake .. -DGGML_WEBGPU=ON -DGGML_WEBGPU_JSPI=ON -DEMDAWNWEBGPU_DIR="$${EMDAWNWEBGPU_DIR}" $${CMAKE_EXTRA_FLAGS}
-        emmake make wllama -j
+        emmake make wllama -j$$(nproc)
 
         # go back to root
         cd ..
@@ -54,8 +57,8 @@ services:
         if [ -z "${SKIP_COMPAT}" ]; then
           mkdir -p build-compat
           cd build-compat
-          emcmake cmake .. -DWLLAMA_COMPAT=ON -DLLAMA_WASM_MEM64=OFF -DGGML_WEBGPU=ON -DGGML_WEBGPU_JSPI=OFF -DEMDAWNWEBGPU_DIR="$${EMDAWNWEBGPU_DIR}" $${CMAKE_EXTRA_FLAGS}
-          emmake make wllama -j
+          emcmake cmake .. -DWLLAMA_COMPAT=ON -DLLAMA_WASM_MEM64=ON -DGGML_WEBGPU=ON -DGGML_WEBGPU_JSPI=OFF -DEMDAWNWEBGPU_DIR="$${EMDAWNWEBGPU_DIR}" $${CMAKE_EXTRA_FLAGS}
+          emmake make wllama -j$$(nproc)
 
           # go back to root
           cd ..

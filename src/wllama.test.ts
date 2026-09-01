@@ -145,6 +145,39 @@ test.sequential('generates completion', async () => {
   await wllama.exit();
 });
 
+test.sequential('generates completions in parallel', async () => {
+  const wllama = createWllama();
+
+  await wllama.loadModelFromUrl(TINY_MODEL, {
+    n_ctx: 1024,
+  });
+
+  // concurrent requests must not interfere with each other (issue #261)
+  const prompts = [
+    'Once upon a time',
+    'The little girl said',
+    'One day, a boy named',
+  ];
+  const results = await Promise.all(
+    prompts.map((prompt) =>
+      wllama.createCompletion({
+        prompt,
+        max_tokens: 10,
+        temperature: 0.0,
+        seed: 42,
+      })
+    )
+  );
+
+  expect(results.length).toBe(prompts.length);
+  for (const res of results) {
+    expect(res).toBeDefined();
+    expect(res.choices[0].text.length).toBeGreaterThan(0);
+  }
+
+  await wllama.exit();
+});
+
 test.sequential('abort signal', async () => {
   const wllama = createWllama();
 
@@ -210,7 +243,10 @@ test.sequential('generates embeddings', async () => {
   const norm2 = Math.sqrt(embedding2.reduce((acc, v) => acc + v * v, 0));
   const cosineSim = dot / (norm1 * norm2);
   expect(cosineSim).toBeGreaterThan(1 - 0.05);
-  expect(cosineSim).toBeLessThan(1);
+  // the trailing space tokenizes away, so both inputs can produce the same
+  // embedding; cosine similarity is then exactly 1 and the floating point sum
+  // can land just above it (seen: 1.0000000000000002)
+  expect(cosineSim).toBeLessThanOrEqual(1 + 1e-6);
 
   await wllama.exit();
 });

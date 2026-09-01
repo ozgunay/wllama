@@ -23,7 +23,8 @@ echo "" >> ./src/workers-code/generated.ts
 process_file() {
   local file="$1"
   local content
-  content=$(node -e "console.log(JSON.stringify(require('fs').readFileSync('$file', 'utf8').toString()))")
+  # strip CR so a CRLF checkout (git core.autocrlf on Windows) does not embed \r\n in the worker code
+  content=$(node -e "console.log(JSON.stringify(require('fs').readFileSync('$file', 'utf8').toString().replace(/\r\n/g, '\n')))")
   echo "export const $2 = $content;" >> ./src/workers-code/generated.ts
   echo "" >> ./src/workers-code/generated.ts
 }

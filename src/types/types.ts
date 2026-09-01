@@ -4,12 +4,18 @@ export interface LoadModelParams {
   seed?: number;
   n_ctx?: number;
   n_batch?: number;
+  n_ubatch?: number;
   // by default, all layers are offloaded if WebGPU is available
   n_gpu_layers?: number;
   // by default, on multi-thread build, we take half number of available threads (hardwareConcurrency / 2)
   n_threads?: number;
   embeddings?: boolean;
   offload_kqv?: boolean;
+  // maximum number of parallel requests (completions, embeddings, ...); default: 4
+  n_parallel?: number;
+  // share one KV cache of n_ctx tokens between all sequences (default: true)
+  // when disabled, each sequence gets its own cache of (n_ctx / n_parallel) tokens
+  kv_unified?: boolean;
   pooling_type?: // legacy values
   | 'LLAMA_POOLING_TYPE_UNSPECIFIED'
     | 'LLAMA_POOLING_TYPE_NONE'

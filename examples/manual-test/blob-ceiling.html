@@ -1,0 +1,106 @@
+<!DOCTYPE html>
+<html>
+<head><meta charset="UTF-8" /><title>blob ceiling probe</title></head>
+<body>
+  <h1>Blob ceiling probe</h1>
+  <p>Compares the two ways a big GGUF can be turned into a Blob, to find where
+     each one stops working. Results in <code>window.__TEST_RESULTS</code>.</p>
+  <pre id="log" style="white-space: pre-wrap; font-size: 12px;"></pre>
+
+  <script type="module">
+    const params = new URLSearchParams(location.search);
+    const modelFile = params.get('model') || 'qwen3-4b-q4_k_m.gguf';
+    const url = '/.dev-models/' + modelFile;
+    // ?only=N runs a single path: each one allocates a multi-GB blob, and
+    // leftovers from earlier paths eat the origin's storage quota
+    const only = params.get('only');
+    const want = (n) => !only || only === String(n);
+
+    const logEl = document.getElementById('log');
+    const results = { model: modelFile, steps: [], done: false, ok: false };
+    window.__TEST_RESULTS = results;
+    const log = (step, ok, detail) => {
+      const line = `[TEST] ${ok ? 'PASS' : 'FAIL'} ${step}${detail ? ' — ' + detail : ''}`;
+      console.log(line);
+      logEl.textContent += line + '\n';
+      results.steps.push({ step, ok, detail: String(detail ?? '') });
+    };
+
+    const mb = (n) => (n / 1048576).toFixed(0) + 'MB';
+    const heap = () =>
+      performance.memory
+        ? `jsHeap=${mb(performance.memory.usedJSHeapSize)}/${mb(performance.memory.jsHeapSizeLimit)}`
+        : 'jsHeap=n/a';
+
+    async function main() {
+      const head = await fetch(url, { method: 'HEAD' });
+      const total = Number(head.headers.get('content-length'));
+      log('size', true, `${mb(total)} — ${heap()}`);
+
+      // (1) Response.blob(): the browser streams straight into blob storage.
+      if (want(1)) try {
+        const t = performance.now();
+        const b = await (await fetch(url)).blob();
+        log('response_blob', b.size === total,
+          `${mb(b.size)} in ${((performance.now() - t) / 1000).toFixed(1)}s — ${heap()}`);
+      } catch (e) {
+        log('response_blob', false, `${e.name}: ${e.message} — ${heap()}`);
+      }
+
+      // (2) The agentop pattern: accumulate every chunk in JS memory, then
+      // build the Blob. Needs the whole file resident before the Blob exists.
+      if (want(2)) try {
+        const t = performance.now();
+        const resp = await fetch(url);
+        const reader = resp.body.getReader();
+        const chunks = [];
+        let loaded = 0;
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          chunks.push(value);
+          loaded += value.byteLength;
+        }
+        const b = new Blob(chunks, { type: 'application/octet-stream' });
+        log('chunks_then_blob', b.size === total,
+          `${mb(b.size)} in ${((performance.now() - t) / 1000).toFixed(1)}s, ${chunks.length} chunks — ${heap()}`);
+      } catch (e) {
+        log('chunks_then_blob', false, `${e.name}: ${e.message} — ${heap()}`);
+      }
+
+      // (3) Counting TransformStream then Response.blob(): keeps the progress
+      // reporting of (2) with the heap profile of (1).
+      if (want(3)) try {
+        const t = performance.now();
+        const resp = await fetch(url);
+        let loaded = 0;
+        let ticks = 0;
+        const counter = new TransformStream({
+          transform(chunk, controller) {
+            loaded += chunk.byteLength;
+            ticks++;
+            controller.enqueue(chunk);
+          },
+        });
+        const counted = new Response(resp.body.pipeThrough(counter), {
+          headers: { 'Content-Type': 'application/octet-stream' },
+        });
+        const b = await counted.blob();
+        log('counted_stream_blob', b.size === total && loaded === total,
+          `${mb(b.size)} in ${((performance.now() - t) / 1000).toFixed(1)}s, ${ticks} progress ticks — ${heap()}`);
+      } catch (e) {
+        log('counted_stream_blob', false, `${e.name}: ${e.message} — ${heap()}`);
+      }
+
+      results.ok = results.steps.every((s) => s.ok);
+    }
+
+    main()
+      .catch((e) => log('exception', false, e?.message || String(e)))
+      .finally(() => {
+        results.done = true;
+        console.log('[TEST] DONE ok=' + results.ok);
+      });
+  </script>
+</body>
+</html>

@@ -81,8 +81,12 @@ export interface WllamaWorkerResources {
   wasmPath: string;
   // if jsPath is not provided, use WLLAMA_EMSCRIPTEN_CODE
   jsPath?: string | { code: string } | undefined;
-  // in compat mode, mem64 must be disabled
   compat: boolean;
+  // whether the wasm was built with -sMEMORY64=1 (i64 size_t/pointer args).
+  // Independent of compat mode: a compat (Asyncify) build can be either width.
+  mem64?: boolean;
+  // skip WebGPU device initialization entirely (e.g. when n_gpu_layers is 0)
+  noWebGPU?: boolean;
 }
 
 export class ProxyToWorker {
@@ -110,7 +114,7 @@ export class ProxyToWorker {
     this.multiThread = nbThread > 0;
     this.logger = logger;
     this.suppressNativeLog = suppressNativeLog;
-    this.useAsyncFile = canUseAsyncFileRead(resources.compat);
+    this.useAsyncFile = canUseAsyncFileRead(resources.compat, resources.mem64);
   }
 
   async getModuleCode(): Promise<string> {
@@ -138,6 +142,12 @@ export class ProxyToWorker {
 
   async moduleInit(ggufFiles: { name: string; blob: Blob }[]): Promise<void> {
     let moduleCode = JSPI_STUB + (await this.getModuleCode());
+    if (this.resources.noWebGPU) {
+      // make requestAdapter() resolve to null so ggml-webgpu skips device registration
+      moduleCode =
+        'try{Object.defineProperty(WorkerNavigator.prototype,"gpu",{get:()=>({requestAdapter:async()=>null})});}catch(e){}' +
+        moduleCode;
+    }
     let mainModuleCode = moduleCode.replace('var Module', 'var ___Module');
     const runOptions = {
       pathConfig: {
@@ -145,6 +155,7 @@ export class ProxyToWorker {
       },
       nbThread: this.nbThread,
       compat: this.resources.compat,
+      mem64: this.resources.mem64 ?? !this.resources.compat,
     };
     const completeCode: string = [
       `const RUN_OPTIONS = ${JSON.stringify(runOptions)};`,

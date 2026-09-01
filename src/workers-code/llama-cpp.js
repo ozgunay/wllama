@@ -7,6 +7,7 @@ let wllamaDebug;
 
 let Module = null;
 let isCompat = false;
+let isMem64 = true;
 let lastStack = '';
 let isAborted = false;
 let hasMultithread = false;
@@ -35,7 +36,10 @@ const getHeapU8 = () => {
 };
 
 const toSizeT = (num) => {
-  return isCompat ? Number(num) : BigInt(num);
+  // a wasm64 build takes i64 size_t/pointer args, which must be BigInt on the
+  // JS side. This follows how the wasm was built, not compat mode: the compat
+  // (Asyncify) build can be either width.
+  return isMem64 ? BigInt(num) : Number(num);
 };
 
 // Get module config that forwards stdout/err to main thread
@@ -45,6 +49,8 @@ const getWModuleConfig = (_argMainScriptBlob) => {
   var argMainScriptBlob = _argMainScriptBlob;
 
   isCompat = RUN_OPTIONS.compat;
+  // absent flag keeps the upstream assumption: compat = wasm32, main = wasm64
+  isMem64 = RUN_OPTIONS.mem64 ?? !RUN_OPTIONS.compat;
   hasMultithread = pthreadPoolSize > 1;
 
   msg({
@@ -119,7 +125,9 @@ const getWModuleConfig = (_argMainScriptBlob) => {
 //      https://github.com/godotengine/godot/issues/70621
 const getWasmMemory = () => {
   let minBytes = 128 * 1024 * 1024;
-  let maxBytes = 4096 * 1024 * 1024;
+  // 16GB is the memory64 ceiling in the WebAssembly JS API; a wasm32 build
+  // cannot go past 4GB, and asking for more only wastes the step-down loop
+  let maxBytes = (isMem64 ? 16384 : 4096) * 1024 * 1024;
   let stepBytes = 128 * 1024 * 1024;
   while (maxBytes > minBytes) {
     try {
@@ -127,7 +135,7 @@ const getWasmMemory = () => {
         initial: toSizeT(minBytes / 65536),
         maximum: toSizeT(maxBytes / 65536),
         shared: true,
-        address: isCompat ? undefined : 'i64',
+        address: isMem64 ? 'i64' : undefined,
       });
       return wasmMemory;
     } catch (e) {
@@ -328,6 +336,69 @@ const callWrapper = (name, ret, args, isAsync) => {
   };
 };
 
+// re-entering the wasm while a call is suspended (JSPI / asyncify) corrupts its state, so only one call runs at a time and the rest wait in the queue
+let wasmCallBusy = false;
+const wasmCallQueue = [];
+
+const runWasmCall = async (callbackId, fn) => {
+  if (isAborted) {
+    // the wasm is dead, fail fast instead of calling into it
+    msg({ callbackId, err: 'wllama has crashed, please reload the module' });
+    return;
+  }
+  if (wasmCallBusy) {
+    wasmCallQueue.push({ callbackId, fn });
+    return;
+  }
+  wasmCallBusy = true;
+  try {
+    await fn();
+  } finally {
+    wasmCallBusy = false;
+    if (isAborted) {
+      // do not touch the wasm again after it aborted; the main thread already rejected the queued tasks
+      wasmCallQueue.length = 0;
+    } else {
+      const next = wasmCallQueue.shift();
+      if (next) runWasmCall(next.callbackId, next.fn);
+    }
+  }
+};
+
+const runAction = async (data) => {
+  const { args, callbackId } = data;
+  const argAction = args[0];
+  const argEncodedMsg = args[1];
+  try {
+    const inputPtr = await wllamaMalloc(toSizeT(argEncodedMsg.byteLength), 0);
+    // copy data to wasm heap
+    const inputBuffer = new Uint8Array(
+      getHeapU8().buffer,
+      Number(inputPtr),
+      argEncodedMsg.byteLength
+    );
+    inputBuffer.set(argEncodedMsg, 0);
+    const outputPtr = await wllamaAction(argAction, inputPtr);
+    // length of output buffer is written at the first 4 bytes of input buffer
+    const outputLen = new Uint32Array(
+      getHeapU8().buffer,
+      Number(inputPtr),
+      1
+    )[0];
+    // copy the output buffer to JS heap
+    const outputBuffer = new Uint8Array(outputLen);
+    const outputSrcView = new Uint8Array(
+      getHeapU8().buffer,
+      Number(outputPtr),
+      outputLen
+    );
+    outputBuffer.set(outputSrcView, 0); // copy it
+    msg({ callbackId, result: outputBuffer }, [outputBuffer.buffer]);
+  } catch (err) {
+    handleError(err);
+  }
+};
+
 function handleError(err) {
   // If WASM already aborted, onAbort already sent signal.abort; skip to avoid
   // re-reporting the resulting WebAssembly.RuntimeError as a JS exception.
@@ -384,7 +455,7 @@ onmessage = async (e) => {
         // init FS
         patchHeapFS();
         // init cwrap
-        const pointer = isCompat ? 'number' : 'bigint';
+        const pointer = isMem64 ? 'bigint' : 'number';
         // TODO: note sure why emscripten cannot bind if there is only 1 argument
         wllamaMalloc = callWrapper('wllama_malloc', pointer, [
           'number',
@@ -446,66 +517,43 @@ onmessage = async (e) => {
   }
 
   if (verb === 'wllama.start') {
-    try {
-      const result = await wllamaStart();
-      msg({ callbackId, result });
-    } catch (err) {
-      handleError(err);
-    }
+    await runWasmCall(callbackId, async () => {
+      try {
+        const result = await wllamaStart();
+        msg({ callbackId, result });
+      } catch (err) {
+        handleError(err);
+      }
+    });
     return;
   }
 
   if (verb === 'wllama.action') {
-    const argAction = args[0];
-    const argEncodedMsg = args[1];
-    try {
-      const inputPtr = await wllamaMalloc(toSizeT(argEncodedMsg.byteLength), 0);
-      // copy data to wasm heap
-      const inputBuffer = new Uint8Array(
-        getHeapU8().buffer,
-        Number(inputPtr),
-        argEncodedMsg.byteLength
-      );
-      inputBuffer.set(argEncodedMsg, 0);
-      const outputPtr = await wllamaAction(argAction, inputPtr);
-      // length of output buffer is written at the first 4 bytes of input buffer
-      const outputLen = new Uint32Array(
-        getHeapU8().buffer,
-        Number(inputPtr),
-        1
-      )[0];
-      // copy the output buffer to JS heap
-      const outputBuffer = new Uint8Array(outputLen);
-      const outputSrcView = new Uint8Array(
-        getHeapU8().buffer,
-        Number(outputPtr),
-        outputLen
-      );
-      outputBuffer.set(outputSrcView, 0); // copy it
-      msg({ callbackId, result: outputBuffer }, [outputBuffer.buffer]);
-    } catch (err) {
-      handleError(err);
-    }
+    await runWasmCall(callbackId, () => runAction(e.data));
     return;
   }
 
   if (verb === 'wllama.exit') {
-    try {
-      const result = await wllamaExit();
-      msg({ callbackId, result });
-    } catch (err) {
-      handleError(err);
-    }
+    await runWasmCall(callbackId, async () => {
+      try {
+        const result = await wllamaExit();
+        msg({ callbackId, result });
+      } catch (err) {
+        handleError(err);
+      }
+    });
     return;
   }
 
   if (verb === 'wllama.debug') {
-    try {
-      const result = await wllamaDebug();
-      msg({ callbackId, result });
-    } catch (err) {
-      handleError(err);
-    }
+    await runWasmCall(callbackId, async () => {
+      try {
+        const result = await wllamaDebug();
+        msg({ callbackId, result });
+      } catch (err) {
+        handleError(err);
+      }
+    });
     return;
   }
 };
