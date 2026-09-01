@@ -7,6 +7,7 @@ import {
   isString,
   delay,
   absoluteUrl,
+  canUseAsyncFileRead,
   parseShardNumber,
   parseModelUrl,
   sortFileByShard,
@@ -76,6 +77,35 @@ describe('absoluteUrl', () => {
 
     expect(absoluteUrl('test.html')).toBe('http://example.com/app/test.html');
     expect(absoluteUrl('/test.html')).toBe('http://example.com/test.html');
+  });
+
+  test('passes through urls that are already absolute', () => {
+    Object.defineProperty(document, 'baseURI', {
+      value: 'file:///C:/agents/',
+      writable: true,
+    });
+
+    // resolving these against a file:// baseURI would corrupt them
+    const dataUrl = 'data:application/wasm;base64,AGFzbQEAAAA=';
+    const blobUrl = 'blob:http://example.com/8f6d0e7c-1b2a-4c3d';
+    expect(absoluteUrl(dataUrl)).toBe(dataUrl);
+    expect(absoluteUrl(blobUrl)).toBe(blobUrl);
+    expect(absoluteUrl('https://cdn.example.com/wllama.wasm')).toBe(
+      'https://cdn.example.com/wllama.wasm'
+    );
+    expect(absoluteUrl('http://cdn.example.com/wllama.wasm')).toBe(
+      'http://cdn.example.com/wllama.wasm'
+    );
+  });
+});
+
+describe('canUseAsyncFileRead', () => {
+  test('is disabled for a wasm64 compat build', () => {
+    // Asyncify + MEMORY64 cannot use the async file read path
+    expect(canUseAsyncFileRead(true, true)).toBe(false);
+    // wasm32 compat keeps it, and mem64 is irrelevant off compat
+    expect(canUseAsyncFileRead(true, false)).toBe(true);
+    expect(canUseAsyncFileRead(true)).toBe(true);
   });
 });
 
