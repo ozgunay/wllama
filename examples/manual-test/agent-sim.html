@@ -1,0 +1,248 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8" />
+  <title>agentop flow simulation</title>
+</head>
+<body>
+  <h1>agentop manager simulation — two sequential queries</h1>
+  <pre id="log" style="white-space: pre-wrap; font-size: 12px;"></pre>
+
+  <script src="/examples/manual-test/wllama-tool-caller.js"></script>
+  <script src="/examples/manual-test/wllama-agent-manager.js"></script>
+
+  <script type="module">
+    import { Wllama } from '/esm/index.js';
+    window.Wllama = Wllama;
+
+    const params = new URLSearchParams(location.search);
+    const nCtx = Number(params.get('ctx') || 4096);
+    const model = params.get('model') || 'qwen3-4b-q4_k_m.gguf';
+    const wdSec = Number(params.get('wd') || 180);
+    const gpuLayers = params.has('gpu') ? Number(params.get('gpu')) : 99;
+
+    const logEl = document.getElementById('log');
+    const results = { nCtx, model, steps: [], done: false, ok: false };
+    window.__TEST_RESULTS = results;
+    function log(step, ok, detail) {
+      const line = `[TEST] ${ok ? 'PASS' : 'FAIL'} ${step}${detail ? ' — ' + String(detail).slice(0, 300) : ''}`;
+      console.log(line);
+      logEl.textContent += line + '\n';
+      results.steps.push({ step, ok, detail: String(detail ?? '').slice(0, 500) });
+    }
+
+    // ── Same system prompt volume as the data-analysis agent ─────────────
+    const SYSTEM_PROMPT = `ROLE & EXPERTISE:
+You are a helpful data analysis assistant with expertise in pandas, numpy, and matplotlib. Your role is to help users understand and analyze CSV data through conversation and tools.
+
+CRITICAL: WHEN TO USE TOOLS VS. WHEN TO JUST ANSWER
+==========================================
+ONLY use tools when the user explicitly asks for:
+- Data analysis (e.g., "show me a summary", "analyze the data")
+- Statistics or calculations (e.g., "what are the correlations")
+- Visualizations (e.g., "create a chart", "plot a histogram")
+- Specific data operations (e.g., "show value counts for region")
+
+DO NOT use tools for:
+- Simple explanatory questions (e.g., "what is quarter?", "explain this column")
+- Clarification requests (e.g., "what does this mean?")
+- General conversation (e.g., "what can you do?", "hello")
+- Conceptual questions (e.g., "what is a correlation?")
+
+For simple questions, just answer directly without calling any tools.
+
+CRITICAL TOOL CALLING FORMAT:
+When you DO need to use a tool, you MUST include BOTH "name" and "arguments" fields:
+<tool_call>
+{"name": "function_name", "arguments": {...}}
+</tool_call>
+
+AVAILABLE TOOLS:
+- get_data_summary(): Get dataset overview, shape, columns, data types, statistics
+- get_column_info(): Get detailed column information and missing values
+- get_value_counts(column): Get value distribution for a specific column
+- create_chart(column, chart_type): Create visualizations (histogram, bar chart)
+- get_correlation_analysis(): Analyze correlations between numeric columns
+
+CONVERSATION GUIDELINES:
+- Always respond to the user's actual question - don't change the subject
+- For conceptual questions, provide clear explanations
+- For data-related questions, use the appropriate tool
+- Present results in clear, well-formatted markdown
+- Be helpful and conversational
+- If a question is ambiguous, ask for clarification instead of guessing
+
+EXAMPLES:
+- User: "What is quarter?" → Answer: "Quarter refers to the fiscal quarter (Q1-Q4) of the year..."
+- User: "Show me a summary" → Use get_data_summary() tool
+- User: "Create a histogram of sales" → Use create_chart(column="sales", chart_type="histogram")
+- User: "What does correlation mean?" → Answer: "Correlation measures the statistical relationship..."
+- User: "Show correlations" → Use get_correlation_analysis() tool
+
+Examples:
+User: Show me a summary of the data
+Assistant: ## Dataset Overview
+Shape: 150 rows × 4 columns
+Columns: sepal_length, sepal_width, petal_length, petal_width
+### Missing Values:
+- No missing values found
+User: What are the correlations between numeric columns?
+Assistant: ## Correlation Analysis
+### Key Insights:
+- **petal_length** and **petal_width**: strong positive correlation (0.963)`;
+
+    const SUMMARY_RESULT = `## Dataset Overview
+Shape: 11208 rows × 17 columns
+
+Columns: date, sales, region, product, sales_channel, customer_segment, marketing_spend, profit_margin, customer_satisfaction, units_sold, deal_size_category, revenue, month, quarter, day_of_week, week_number, is_weekend
+
+### Data Types:
+- **date**: str
+- **sales**: float64
+- **region**: str
+- **product**: str
+- **sales_channel**: str
+- **customer_segment**: str
+- **marketing_spend**: float64
+- **profit_margin**: float64
+- **customer_satisfaction**: float64
+- **units_sold**: int64
+- **deal_size_category**: str
+- **revenue**: float64
+- **month**: int64
+- **quarter**: int64
+- **day_of_week**: str
+- **week_number**: int64
+- **is_weekend**: bool
+
+### Missing Values:
+- ✅ No missing values found
+
+### Summary Statistics:
+|  | sales | marketing_spend | profit_margin | customer_satisfaction | units_sold | revenue | month | quarter | week_number |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| count | 11208.0 | 11208.0 | 11208.0 | 11208.0 | 11208.0 | 11208.0 | 11208.0 | 11208.0 | 11208.0 |
+| mean | 62566.24370271235 | 1755.0606049250537 | 0.3126305317630264 | 4.634516416845111 | 55.521680942184155 | 19840.64859498305 | 7.147216274089936 | 2.6968236973590294 | 29.114114917915774 |
+| std | 47883.481124364866 | 721.2267868398478 | 0.08763144318230472 | 0.36163918712821064 | 44.90237740986753 | 17172.36345160181 | 3.5182489381719093 | 1.1398900118836512 | 15.40676876800563 |
+| min | 1789.5 | 500.32 | 0.15 | 3.58 | 1.0 | 377.5845 | 1.0 | 1.0 | 1.0 |
+| 25% | 27212.052499999998 | 1129.4250000000002 | 0.239 | 4.36 | 23.0 | 7782.549314999999 | 4.0 | 2.0 | 15.0 |
+| 50% | 49261.134999999995 | 1753.595 | 0.307 | 4.72 | 43.0 | 14577.65595 | 7.0 | 3.0 | 30.0 |
+| 75% | 84185.0875 | 2380.0125000000003 | 0.377 | 5.0 | 74.0 | 26365.877882499997 | 10.0 | 4.0 | 43.0 |
+| max | 358172.13 | 2999.74 | 0.5 | 5.0 | 375.0 | 150749.11331999995 | 12.0 | 4.0 | 52.0 |`;
+
+    const CORR_RESULT = `## Correlation Analysis
+### Correlation Matrix:
+|  | sales | marketing_spend | profit_margin | customer_satisfaction | units_sold | revenue |
+| --- | --- | --- | --- | --- | --- | --- |
+| sales | 1.0 | 0.021 | -0.004 | 0.012 | 0.887 | 0.951 |
+| marketing_spend | 0.021 | 1.0 | 0.003 | 0.007 | 0.019 | 0.02 |
+| profit_margin | -0.004 | 0.003 | 1.0 | 0.001 | -0.006 | 0.28 |
+| customer_satisfaction | 0.012 | 0.007 | 0.001 | 1.0 | 0.01 | 0.011 |
+| units_sold | 0.887 | 0.019 | -0.006 | 0.01 | 1.0 | 0.845 |
+| revenue | 0.951 | 0.02 | 0.28 | 0.011 | 0.845 | 1.0 |
+### Key Insights:
+- 📈 **sales** and **units_sold**: strong positive correlation (0.887)
+- 📈 **sales** and **revenue**: strong positive correlation (0.951)
+- 📈 **units_sold** and **revenue**: strong positive correlation (0.845)`;
+
+    // ── Fake Pyodide bridge with the same tool surface ────────────────────
+    const fakeBridge = {
+      async executeTool(name, args) {
+        console.log('[SIM] executeTool:', name, JSON.stringify(args));
+        if (name === 'get_data_summary') return SUMMARY_RESULT;
+        if (name === 'get_correlation_analysis') return CORR_RESULT;
+        if (name === 'get_column_info') return SUMMARY_RESULT;
+        if (name === 'get_value_counts') return '| Value | Count |\n| --- | --- |\n| North | 2802 |\n| South | 2802 |\n| East | 2802 |\n| West | 2802 |';
+        if (name === 'create_chart') return 'Chart created successfully for column ' + (args.column || '?');
+        return 'ok';
+      },
+    };
+
+    const TOOL_SCHEMAS = [
+      { type: 'function', function: { name: 'get_data_summary', description: 'Get dataset summary: shape, columns, data types, statistics.', parameters: { type: 'object', properties: {}, required: [] } } },
+      { type: 'function', function: { name: 'get_column_info', description: 'Get column info: data types and missing values.', parameters: { type: 'object', properties: {}, required: [] } } },
+      { type: 'function', function: { name: 'get_value_counts', description: 'Get value counts for a specific column.', parameters: { type: 'object', properties: { column: { type: 'string', description: 'The column parameter' } }, required: ['column'] } } },
+      { type: 'function', function: { name: 'create_chart', description: 'Create a chart for a specific column.', parameters: { type: 'object', properties: { column: { type: 'string' }, chart_type: { type: 'string' } }, required: ['column'] } } },
+      { type: 'function', function: { name: 'get_correlation_analysis', description: 'Get correlation analysis for numeric columns.', parameters: { type: 'object', properties: {}, required: [] } } },
+      { type: 'function', function: { name: 'dataframe_to_markdown', description: 'Convert pandas DataFrame to markdown table format.', parameters: { type: 'object', properties: { max_rows: { type: 'integer' } }, required: [] } } },
+    ];
+
+    async function runQuery(mgr, n, q, timeoutSec) {
+      log(`q${n}_start`, true, q);
+      const t0 = performance.now();
+      const watchdog = new Promise((_, rej) =>
+        setTimeout(async () => {
+          try {
+            const proxy = mgr.wllama.proxy;
+            console.log('[PROBE] taskQueue=' + JSON.stringify(proxy.taskQueue.map(t => t.param.verb))
+              + ' resultQueue=' + JSON.stringify(proxy.resultQueue.map(t => t.param.verb))
+              + ' busy=' + proxy.busy);
+            const dbg = await Promise.race([
+              proxy.wllamaDebug(),
+              new Promise(r => setTimeout(() => r('wllamaDebug TIMED OUT'), 5000)),
+            ]);
+            console.log('[PROBE] debug=' + JSON.stringify(dbg).slice(0, 800));
+          } catch (e) { console.log('[PROBE] failed: ' + e.message); }
+          rej(new Error(`WATCHDOG: query ${n} exceeded ${timeoutSec}s`));
+        }, timeoutSec * 1000));
+      const answer = await Promise.race([
+        mgr.processMessage(q, { temperature: 0.7, maxTokens: 1024 }),
+        watchdog,
+      ]);
+      log(`q${n}_done`, true, `${((performance.now() - t0) / 1000).toFixed(1)}s — ${answer.slice(0, 120)}`);
+      return answer;
+    }
+
+    async function main() {
+      // Mirror initializeModel minus the file:// data-URL detour
+      const mgr = new window.WllamaAgentManager();
+      mgr.setToolBridge(fakeBridge);
+      mgr.setToolSchemas(TOOL_SCHEMAS);
+      mgr.setFunctionCallingConfig({ method: 'grammar', tag_format: '<tool_call>', supports_grammar: true, architecture: 'grammar-wllama' });
+      mgr.systemPrompt = SYSTEM_PROMPT;
+
+      const wllama = new window.Wllama({ default: '/src/wasm/wllama.wasm' });
+      wllama.setCompat(null);
+      // Record every completion request so a hang can be replayed exactly.
+      window.__REQS = [];
+      const __orig = wllama.createChatCompletion.bind(wllama);
+      wllama.createChatCompletion = (opts) => {
+        window.__REQS.push({
+          stream: !!opts.stream,
+          tools: !!opts.tools,
+          max_tokens: opts.max_tokens,
+          nMsg: opts.messages?.length,
+          roles: opts.messages?.map(m => m.role).join(','),
+          chars: JSON.stringify(opts.messages || []).length,
+        });
+        console.log('[REQ ' + window.__REQS.length + '] ' + JSON.stringify(window.__REQS[window.__REQS.length - 1]));
+        window.__LAST_MESSAGES = opts.messages;
+        return __orig(opts);
+      };
+      const t0 = performance.now();
+      const resp = await fetch('/.dev-models/' + model);
+      if (!resp.ok) throw new Error('model fetch failed: ' + resp.status);
+      const blob = await resp.blob();
+      await wllama.loadModel([blob], { n_ctx: nCtx, n_gpu_layers: gpuLayers });
+      mgr.wllama = wllama;
+      mgr.isLoaded = true;
+      log('model_load', true, `${((performance.now() - t0) / 1000).toFixed(1)}s n_ctx=${nCtx}`);
+
+      // Phrase q1 so even the 0.6B reliably calls the tool (matches the
+      // user's 4B run where q1 tool-called and produced a huge result).
+      await runQuery(mgr, 1, 'Use the get_data_summary tool to show me a summary of the data', wdSec);
+      await runQuery(mgr, 2, 'What are the correlations between numeric columns?', wdSec);
+      await runQuery(mgr, 3, 'What does correlation mean?', wdSec);
+
+      results.ok = true;
+    }
+
+    main()
+      .catch((err) => log('exception', false, err?.message || String(err)))
+      .finally(() => {
+        results.done = true;
+        console.log('[TEST] DONE ok=' + results.ok);
+      });
+  </script>
+</body>
+</html>
