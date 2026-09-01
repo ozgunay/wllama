@@ -149,10 +149,14 @@ export const isMmproj = async (blob: Blob): Promise<boolean> => {
 
 export const delay = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
-export const absoluteUrl = (relativePath: string) =>
-  typeof document === 'undefined'
+export const absoluteUrl = (relativePath: string): string => {
+  // already absolute; resolving a data: or blob: URL against a file:// baseURI
+  // corrupts it
+  if (/^(https?|blob|data):/.test(relativePath)) return relativePath;
+  return typeof document === 'undefined'
     ? new URL(relativePath, self.location.href).href
     : new URL(relativePath, document.baseURI).href;
+};
 
 export const padDigits = (number: number, digits: number) => {
   return (
@@ -347,6 +351,11 @@ export const createWorker = (workerCode: string | Blob): Worker => {
       ? new Blob([workerCode], { type: 'text/javascript' })
       : (workerCode as Blob)
   );
+  // module workers are not allowed from a file:// page, where the blob worker
+  // inherits the opaque origin; a classic worker still runs
+  if (location.protocol === 'file:') {
+    return new Worker(workerURL);
+  }
   return new Worker(workerURL, { type: 'module' });
 };
 
