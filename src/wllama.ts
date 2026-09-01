@@ -1,7 +1,6 @@
 import { ProxyToWorker, type WllamaWorkerResources } from './worker';
 import {
   absoluteUrl,
-  canUseAsyncFileRead,
   cbToAsyncIter,
   checkEnvironmentCompatible,
   isFirefox,
@@ -162,6 +161,9 @@ export class WllamaRuntimeError extends Error {
 export interface WllamaCompat {
   worker: string | { code: string };
   wasm: string;
+  // set when the compat wasm was built with -sMEMORY64=1. The published
+  // @wllama/wllama-compat build is wasm32, so this defaults to false.
+  mem64?: boolean;
 }
 
 export class Wllama {
@@ -521,7 +523,7 @@ export class Wllama {
       _name: 'load_req',
       log_level: logLevel,
       // if async read is not supported, use mmap; refer to README-dev.md for more details
-      use_mmap: !canUseAsyncFileRead(workerResources.compat),
+      use_mmap: !this.proxy.useAsyncFile,
       use_mlock: false,
       n_gpu_layers: params.n_gpu_layers ?? 99999,
       n_ctx: params.n_ctx ?? 1024,
@@ -1138,6 +1140,7 @@ export class Wllama {
     const workerResources: WllamaWorkerResources = {
       wasmPath: absoluteUrl(this.pathConfig['default']),
       compat: false,
+      mem64: true, // the main (JSPI) build is always wasm64
     };
     if (needCompat()) {
       if (!this.compat) {
@@ -1163,6 +1166,7 @@ export class Wllama {
         workerResources.wasmPath = absoluteUrl(this.compat.wasm);
         workerResources.jsPath = this.compat.worker;
         workerResources.compat = true;
+        workerResources.mem64 = this.compat.mem64 ?? false;
       }
     }
 

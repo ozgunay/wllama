@@ -48,13 +48,16 @@ set(WLLAMA_LINK_OPTIONS
 
 if (WLLAMA_COMPAT)
     # no wasm exception (not compatible with asyncify - asyncify is needed for firefox and safari)
-    # no mem64 (not compatible with safari)
+    # mem64 is kept on: without it the 4GB wasm32 ceiling cannot hold the larger
+    # models (gemma-4-12b is about 7.5GB of weights before any KV cache)
     list(APPEND WLLAMA_COMPILE_OPTIONS
         -fexceptions
         -pthread
+        -sMEMORY64=1
     )
     list(APPEND WLLAMA_LINK_OPTIONS
         -fexceptions
+        -sMEMORY64=1
         -sASYNCIFY=1
         -sASYNCIFY_ADD=['wllama_start','wllama_action']
     )

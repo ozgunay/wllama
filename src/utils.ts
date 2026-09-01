@@ -399,7 +399,13 @@ export const cbToAsyncIter =
  * Check if we can use async file read, where the wasm env can asynchronously read a Blob.
  * Please refer to README-dev.md for more details.
  */
-export const canUseAsyncFileRead = (compat: boolean) =>
-  isSupportJSPI() || compat;
+export const canUseAsyncFileRead = (compat: boolean, mem64?: boolean) => {
+  // Asyncify + MEMORY64 breaks emscripten's EM_ASYNC_JS unwind/rewind glue:
+  // i64 args cross the invoke_*/dynCall trampolines as plain Numbers. A wasm64
+  // compat build must load through heapfs instead. The old 2GB ftell limit
+  // does not apply there, because long is 64-bit in wasm64.
+  if (compat && (mem64 ?? false)) return false;
+  return isSupportJSPI() || compat;
+};
 
 export const needCompat = () => !isSupportJSPI() || !isSupportMem64();
