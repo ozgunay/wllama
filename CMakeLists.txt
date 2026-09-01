@@ -24,7 +24,9 @@ set(WLLAMA_LINK_OPTIONS
     -sEXPORT_ES6=0
     -sMODULARIZE=0
     -sINITIAL_MEMORY=128MB
-    -sMAXIMUM_MEMORY=4096MB
+    # 16GB is the ceiling the WebAssembly JS API puts on memory64, so this is
+    # as high as any browser allows; both builds are mem64, see below
+    -sMAXIMUM_MEMORY=16384MB
     -sSTACK_SIZE=5MB
     -sALLOW_MEMORY_GROWTH=1
     -sFORCE_FILESYSTEM=1
