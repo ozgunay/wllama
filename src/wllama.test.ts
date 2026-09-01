@@ -243,7 +243,10 @@ test.sequential('generates embeddings', async () => {
   const norm2 = Math.sqrt(embedding2.reduce((acc, v) => acc + v * v, 0));
   const cosineSim = dot / (norm1 * norm2);
   expect(cosineSim).toBeGreaterThan(1 - 0.05);
-  expect(cosineSim).toBeLessThan(1);
+  // the trailing space tokenizes away, so both inputs can produce the same
+  // embedding; cosine similarity is then exactly 1 and the floating point sum
+  // can land just above it (seen: 1.0000000000000002)
+  expect(cosineSim).toBeLessThanOrEqual(1 + 1e-6);
 
   await wllama.exit();
 });
