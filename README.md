@@ -1,3 +1,94 @@
+# wllama (AgentOp fork)
+
+This is a fork of **[ngxson/wllama](https://github.com/ngxson/wllama)**, the WebAssembly binding for
+[llama.cpp](https://github.com/ggml-org/llama.cpp). Upstream is the home of the project: its
+[docs](https://github.ngxson.com/wllama/docs/), [releases](https://github.com/ngxson/wllama/releases) and
+[issue tracker](https://github.com/ngxson/wllama/issues) are the ones you want. Use this fork only if you
+need the one change described below; for everything else, use the upstream package
+[`@wllama/wllama`](https://www.npmjs.com/package/@wllama/wllama).
+
+Forked at upstream **v3.6.1** (commit [`e397279`](https://github.com/ngxson/wllama/commit/e397279)).
+
+## What differs from upstream
+
+**Both wasm builds are compiled with `-sMEMORY64=1`, and the memory ceiling on both is 16GB.**
+
+Upstream builds the default (JSPI) target as wasm64 and the compat (Asyncify) target as wasm32, so the
+fallback path is capped by the 4GB wasm32 address space. In this fork the compat target is wasm64 too, and
+`-sMAXIMUM_MEMORY=16384MB` raises the ceiling on both from 4GB to 16GB - the maximum the WebAssembly JS API
+allows for memory64. See [CMakeLists.txt](./CMakeLists.txt).
+
+That is the whole point of the fork. There is no other feature work here.
+
+### Why AgentOp needed it
+
+[AgentOp](https://agentop.dev) runs local models in the browser, and the models its users want are past the
+wasm32 limit: a 7.5GB gemma-4-12b does not fit in a 4GB address space before you add a single byte of KV
+cache. Raising the ceiling on the default build alone is not enough either, because the browsers that fall
+back to the compat build need to load the same models.
+
+### What it costs
+
+- Both paths now need a browser with WebAssembly memory64. Upstream falls back to a wasm32 compat build when
+  memory64 is missing; this fork has no such fallback to offer.
+- Asyncify plus MEMORY64 breaks emscripten's `EM_ASYNC_JS` unwind/rewind glue: i64 arguments cross the
+  `invoke_*`/`dynCall` trampolines as plain Numbers. A wasm64 compat build therefore cannot use the async
+  file read path and loads through heapfs instead. The 2GB `ftell` limit that motivated async read does not
+  apply there, because `long` is 64-bit in wasm64. See `canUseAsyncFileRead` in [src/utils.ts](./src/utils.ts).
+- Pointer width is now tracked separately from compat mode, as `WllamaCompat.mem64` and
+  `WllamaWorkerResources.mem64`. It defaults to `false` when absent, so the published wasm32
+  `@wllama/wllama-compat` assets still work with this build of the library.
+
+### Other changes on top of v3.6.1
+
+- The wasm and worker builds run on Windows, and `build_wasm.sh` fails the build instead of reporting success.
+- `absoluteUrl` passes absolute URLs through, and workers start as classic workers on `file://` pages, so a
+  standalone single-file agent can run from disk.
+- Manual browser harnesses under [examples/manual-test/](./examples/manual-test/) for real-model verification.
+- llama.cpp moved forward 72 commits from the v3.6.1 pin, for two WebGPU fixes (see below).
+
+## How to build both variants
+
+Docker compose is required; the wasm builds run inside `emscripten/emsdk:4.0.20`.
+
+```bash
+git clone --recurse-submodules https://github.com/agentopofficial/wllama.git
+cd wllama
+npm ci
+
+# builds both wasm targets:
+#   build/       -> JSPI + wasm64      -> copied to src/wasm/
+#   build-compat/-> Asyncify + wasm64  -> copied to compat/wasm/
+npm run build:wasm
+
+# then the ES module, minified bundle, type definitions and docs
+npm run build
+```
+
+- `SKIP_COMPAT=1 npm run build:wasm` builds only the default target.
+- `npm run build:test` builds with `test-backend-ops` included.
+- The `.wasm` outputs are gitignored, so they exist only in a build tree - which is why the git tag, not the
+  bundle, is the thing to check out when you want to reproduce a shipped binary.
+
+## Pinned llama.cpp
+
+The `llama.cpp` submodule is pinned to
+[`1b89a43e3835f0c8bbef5543977151972874a9ce`](https://github.com/ggml-org/llama.cpp/commit/1b89a43e3835f0c8bbef5543977151972874a9ce)
+(master, build b10735). `git submodule update --init --recursive` checks out exactly that commit. Do not pass
+`--remote` unless you mean to move the pin.
+
+## Licence and credit
+
+MIT, same as upstream. All of the work below this line, and nearly all of the work above it, is
+[Xuan Son NGUYEN](https://github.com/ngxson)'s.
+
+---
+
+# Upstream README
+
+Everything below is upstream's README, kept verbatim. Its links, version notes and install instructions point
+at [ngxson/wllama](https://github.com/ngxson/wllama), not at this fork.
+
 # wllama - Wasm binding for llama.cpp
 
 ![](./README_banner.png)

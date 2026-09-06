@@ -1,5 +1,9 @@
 # @wllama/wllama-compat
 
+> **Fork note (AgentOp):** in this fork the compat WASM is built with `-sMEMORY64=1` as well, so the
+> paragraphs below that say compat mode drops MEMORY64 describe upstream, not the assets built from this
+> repo. Compat mode here still means Asyncify instead of JSPI. See the [root README](../README.md).
+
 Optional package that provides compatibility WASM assets for `@wllama/wllama` on browsers that lack [JSPI](https://github.com/WebAssembly/js-promise-integration) or [MEMORY64](https://github.com/WebAssembly/memory64) support - most notably Safari and older browsers.
 
 ## Why this package exists
