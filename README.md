@@ -22,7 +22,7 @@ That is the whole point of the fork. There is no other feature work here.
 
 ### Why AgentOp needed it
 
-[AgentOp](https://agentop.dev) runs local models in the browser, and the models its users want are past the
+[AgentOp](https://www.agentop.com) runs local models in the browser, and the models its users want are past the
 wasm32 limit: a 7.5GB gemma-4-12b does not fit in a 4GB address space before you add a single byte of KV
 cache. Raising the ceiling on the default build alone is not enough either, because the browsers that fall
 back to the compat build need to load the same models.
