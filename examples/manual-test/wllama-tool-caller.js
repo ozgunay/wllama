@@ -15,14 +15,14 @@
  *                        as a simple terminal (objects/arrays).
  */
 function _jsonLiteralToGbnf(v) {
-    if (typeof v === 'string') {
-        const esc = v.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
-        return `"\\"${esc}\\""`;
-    }
-    if (typeof v === 'number') return `"${v}"`;
-    if (typeof v === 'boolean') return v ? '"true"' : '"false"';
-    if (v === null) return '"null"';
-    return null;
+  if (typeof v === 'string') {
+    const esc = v.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+    return `"\\"${esc}\\""`;
+  }
+  if (typeof v === 'number') return `"${v}"`;
+  if (typeof v === 'boolean') return v ? '"true"' : '"false"';
+  if (v === null) return '"null"';
+  return null;
 }
 
 /**
@@ -38,42 +38,42 @@ function _jsonLiteralToGbnf(v) {
  * @returns {string} GBNF rule reference (terminal or named rule)
  */
 function _propValueRule(schema, ruleBase, extraRules) {
-    if (!schema || typeof schema !== 'object') return 'value';
+  if (!schema || typeof schema !== 'object') return 'value';
 
-    // enum — constrain to the exact declared literals
-    if (Array.isArray(schema.enum) && schema.enum.length > 0) {
-        const alts = schema.enum.map(_jsonLiteralToGbnf);
-        if (alts.every(Boolean)) {
-            const ruleName = `${ruleBase}-enum`;
-            extraRules.push(`${ruleName} ::= ${alts.join(' | ')}`);
-            return ruleName;
-        }
-        // Non-primitive enum values — fall through to type-based handling.
+  // enum — constrain to the exact declared literals
+  if (Array.isArray(schema.enum) && schema.enum.length > 0) {
+    const alts = schema.enum.map(_jsonLiteralToGbnf);
+    if (alts.every(Boolean)) {
+      const ruleName = `${ruleBase}-enum`;
+      extraRules.push(`${ruleName} ::= ${alts.join(' | ')}`);
+      return ruleName;
     }
+    // Non-primitive enum values — fall through to type-based handling.
+  }
 
-    switch (schema.type) {
-        case 'string':
-            return 'string';
-        case 'integer':
-            return 'integer';
-        case 'number':
-            return 'number';
-        case 'boolean':
-            return 'boolean';
-        case 'array': {
-            const itemRule = schema.items
-                ? _propValueRule(schema.items, `${ruleBase}-i`, extraRules)
-                : 'value';
-            const ruleName = `${ruleBase}-arr`;
-            extraRules.push(
-                `${ruleName} ::= "[" ws "]" | "[" ws ${itemRule} (ws "," ws ${itemRule})* ws "]"`
-            );
-            return ruleName;
-        }
-        default:
-            // object / unknown / untyped — generic JSON value
-            return 'value';
+  switch (schema.type) {
+    case 'string':
+      return 'string';
+    case 'integer':
+      return 'integer';
+    case 'number':
+      return 'number';
+    case 'boolean':
+      return 'boolean';
+    case 'array': {
+      const itemRule = schema.items
+        ? _propValueRule(schema.items, `${ruleBase}-i`, extraRules)
+        : 'value';
+      const ruleName = `${ruleBase}-arr`;
+      extraRules.push(
+        `${ruleName} ::= "[" ws "]" | "[" ws ${itemRule} (ws "," ws ${itemRule})* ws "]"`
+      );
+      return ruleName;
     }
+    default:
+      // object / unknown / untyped — generic JSON value
+      return 'value';
+  }
 }
 
 /**
@@ -92,49 +92,56 @@ function _propValueRule(schema, ruleBase, extraRules) {
  * @returns {{body: string, usedFallback: boolean}}
  */
 function _buildArgsRule(parameters, toolIndex, extraRules) {
-    const hasProps = parameters
-        && parameters.properties
-        && typeof parameters.properties === 'object'
-        && Object.keys(parameters.properties).length > 0;
+  const hasProps =
+    parameters &&
+    parameters.properties &&
+    typeof parameters.properties === 'object' &&
+    Object.keys(parameters.properties).length > 0;
 
-    if (!hasProps) {
-        // Explicit empty-object schema → match exactly {}. Unknown/missing
-        // schema → permissive object so the tool is still callable.
-        if (parameters && parameters.type === 'object') {
-            return { body: '"{" ws "}"', usedFallback: false };
-        }
-        return { body: 'object', usedFallback: true };
+  if (!hasProps) {
+    // Explicit empty-object schema → match exactly {}. Unknown/missing
+    // schema → permissive object so the tool is still callable.
+    if (parameters && parameters.type === 'object') {
+      return { body: '"{" ws "}"', usedFallback: false };
     }
+    return { body: 'object', usedFallback: true };
+  }
 
-    const props = parameters.properties;
-    const required = Array.isArray(parameters.required) ? parameters.required : [];
-    const keys = Object.keys(props);
-    const requiredKeys = keys.filter(k => required.includes(k));
-    const optionalKeys = keys.filter(k => !required.includes(k));
+  const props = parameters.properties;
+  const required = Array.isArray(parameters.required)
+    ? parameters.required
+    : [];
+  const keys = Object.keys(props);
+  const requiredKeys = keys.filter((k) => required.includes(k));
+  const optionalKeys = keys.filter((k) => !required.includes(k));
 
-    // All-optional objects make leading-comma handling ambiguous in GBNF;
-    // keep them permissive rather than risk an unsatisfiable grammar.
-    if (requiredKeys.length === 0) {
-        return { body: 'object', usedFallback: true };
-    }
+  // All-optional objects make leading-comma handling ambiguous in GBNF;
+  // keep them permissive rather than risk an unsatisfiable grammar.
+  if (requiredKeys.length === 0) {
+    return { body: 'object', usedFallback: true };
+  }
 
-    const keyLiteral = (k) => {
-        const esc = k.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
-        return `"\\"${esc}\\""`;
-    };
+  const keyLiteral = (k) => {
+    const esc = k.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+    return `"\\"${esc}\\""`;
+  };
 
-    const pairFor = (key) => {
-        const j = keys.indexOf(key);
-        const valRule = _propValueRule(props[key], `a${toolIndex}-${j}`, extraRules);
-        return `${keyLiteral(key)} ws ":" ws ${valRule}`;
-    };
+  const pairFor = (key) => {
+    const j = keys.indexOf(key);
+    const valRule = _propValueRule(
+      props[key],
+      `a${toolIndex}-${j}`,
+      extraRules
+    );
+    return `${keyLiteral(key)} ws ":" ws ${valRule}`;
+  };
 
-    // Required keys: comma-joined head, fixed order.
-    const head = requiredKeys.map(pairFor).join(' ws "," ws ');
-    // Optional keys: each an independent ( "," pair )? after the head.
-    const tail = optionalKeys.map(k => ` (ws "," ws ${pairFor(k)})?`).join('');
+  // Required keys: comma-joined head, fixed order.
+  const head = requiredKeys.map(pairFor).join(' ws "," ws ');
+  // Optional keys: each an independent ( "," pair )? after the head.
+  const tail = optionalKeys.map((k) => ` (ws "," ws ${pairFor(k)})?`).join('');
 
-    return { body: `"{" ws ${head}${tail} ws "}"`, usedFallback: false };
+  return { body: `"{" ws ${head}${tail} ws "}"`, usedFallback: false };
 }
 
 /**
@@ -160,59 +167,61 @@ function _buildArgsRule(parameters, toolIndex, extraRules) {
  * @returns {string} GBNF grammar string, or empty string if no tools
  */
 function generateToolCallGrammar(toolSchemas) {
-    if (!toolSchemas || toolSchemas.length === 0) {
-        return '';
-    }
+  if (!toolSchemas || toolSchemas.length === 0) {
+    return '';
+  }
 
-    const tools = toolSchemas
-        .map(s => (s.function ? s.function : s))
-        .filter(t => t && t.name);
+  const tools = toolSchemas
+    .map((s) => (s.function ? s.function : s))
+    .filter((t) => t && t.name);
 
-    if (tools.length === 0) return '';
+  if (tools.length === 0) return '';
 
-    const rootAlts = [];
-    const callRules = [];
-    const argsRules = [];
-    const extraRules = [];
+  const rootAlts = [];
+  const callRules = [];
+  const argsRules = [];
+  const extraRules = [];
 
-    tools.forEach((tool, i) => {
-        const callRule = `tc-${i}`;
-        const argsRule = `args-${i}`;
-        const nameEsc = String(tool.name).replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+  tools.forEach((tool, i) => {
+    const callRule = `tc-${i}`;
+    const argsRule = `args-${i}`;
+    const nameEsc = String(tool.name)
+      .replace(/\\/g, '\\\\')
+      .replace(/"/g, '\\"');
 
-        rootAlts.push(callRule);
-        callRules.push(
-            `${callRule} ::= "{" ws "\\"name\\"" ws ":" ws "\\"${nameEsc}\\"" ws "," ` +
-            `ws "\\"arguments\\"" ws ":" ws ${argsRule} ws "}"`
-        );
+    rootAlts.push(callRule);
+    callRules.push(
+      `${callRule} ::= "{" ws "\\"name\\"" ws ":" ws "\\"${nameEsc}\\"" ws "," ` +
+        `ws "\\"arguments\\"" ws ":" ws ${argsRule} ws "}"`
+    );
 
-        const built = _buildArgsRule(tool.parameters, i, extraRules);
-        argsRules.push(`${argsRule} ::= ${built.body}`);
-    });
+    const built = _buildArgsRule(tool.parameters, i, extraRules);
+    argsRules.push(`${argsRule} ::= ${built.body}`);
+  });
 
-    rootAlts.push('"null"');
+  rootAlts.push('"null"');
 
-    // Generic fallback + shared primitives. `object`/`value`/`array` back the
-    // permissive fallback and any untyped nested values.
-    const shared = [
-        'object ::= "{" ws "}" | "{" ws pair (ws "," ws pair)* ws "}"',
-        'pair ::= string ws ":" ws value',
-        'array ::= "[" ws "]" | "[" ws value (ws "," ws value)* ws "]"',
-        'value ::= string | number | object | array | "true" | "false" | "null"',
-        'string ::= "\\"" ([^"\\\\] | "\\\\" .)* "\\""',
-        'integer ::= "-"? [0-9]+',
-        'number ::= "-"? [0-9]+ ("." [0-9]+)? ([eE] [+-]? [0-9]+)?',
-        'boolean ::= "true" | "false"',
-        'ws ::= ([ \\t\\n\\r])*',
-    ];
+  // Generic fallback + shared primitives. `object`/`value`/`array` back the
+  // permissive fallback and any untyped nested values.
+  const shared = [
+    'object ::= "{" ws "}" | "{" ws pair (ws "," ws pair)* ws "}"',
+    'pair ::= string ws ":" ws value',
+    'array ::= "[" ws "]" | "[" ws value (ws "," ws value)* ws "]"',
+    'value ::= string | number | object | array | "true" | "false" | "null"',
+    'string ::= "\\"" ([^"\\\\] | "\\\\" .)* "\\""',
+    'integer ::= "-"? [0-9]+',
+    'number ::= "-"? [0-9]+ ("." [0-9]+)? ([eE] [+-]? [0-9]+)?',
+    'boolean ::= "true" | "false"',
+    'ws ::= ([ \\t\\n\\r])*',
+  ];
 
-    return [
-        `root ::= ${rootAlts.join(' | ')}`,
-        ...callRules,
-        ...argsRules,
-        ...extraRules,
-        ...shared,
-    ].join('\n');
+  return [
+    `root ::= ${rootAlts.join(' | ')}`,
+    ...callRules,
+    ...argsRules,
+    ...extraRules,
+    ...shared,
+  ].join('\n');
 }
 
 /**
@@ -223,18 +232,24 @@ function generateToolCallGrammar(toolSchemas) {
  * @returns {string} System prompt tool description
  */
 function buildToolSystemPrompt(toolSchemas) {
-    if (!toolSchemas || toolSchemas.length === 0) return '';
+  if (!toolSchemas || toolSchemas.length === 0) return '';
 
-    const toolDescriptions = toolSchemas.map(schema => {
-        const fn = schema.function || schema;
-        return JSON.stringify({
-            name: fn.name,
-            description: fn.description || '',
-            parameters: fn.parameters || {},
-        }, null, 2);
-    }).join('\n');
+  const toolDescriptions = toolSchemas
+    .map((schema) => {
+      const fn = schema.function || schema;
+      return JSON.stringify(
+        {
+          name: fn.name,
+          description: fn.description || '',
+          parameters: fn.parameters || {},
+        },
+        null,
+        2
+      );
+    })
+    .join('\n');
 
-    return `You have access to the following tools. This is the first (constrained) pass: you must output EITHER a JSON tool call object OR the literal word null.
+  return `You have access to the following tools. This is the first (constrained) pass: you must output EITHER a JSON tool call object OR the literal word null.
 
 Available tools:
 ${toolDescriptions}
@@ -255,66 +270,74 @@ Rules:
  * @returns {Object|null} Parsed tool call {name, parameters} or null
  */
 function detectToolCall(response, toolSchemas = []) {
-    if (!response || typeof response !== 'string') return null;
+  if (!response || typeof response !== 'string') return null;
 
-    // Build a fast-lookup set of valid tool names when schemas are provided.
-    // An empty toolSchemas array means "no validation" (e.g. during testing).
-    const validNames = toolSchemas.length > 0
-        ? new Set(toolSchemas.map(s => (s.function ? s.function.name : s.name)).filter(Boolean))
-        : null;
+  // Build a fast-lookup set of valid tool names when schemas are provided.
+  // An empty toolSchemas array means "no validation" (e.g. during testing).
+  const validNames =
+    toolSchemas.length > 0
+      ? new Set(
+          toolSchemas
+            .map((s) => (s.function ? s.function.name : s.name))
+            .filter(Boolean)
+        )
+      : null;
 
-    /** Normalise raw args to a plain object, never an array or primitive. */
-    function normalizeArgs(raw) {
-        if (raw && typeof raw === 'object' && !Array.isArray(raw)) return raw;
-        return {};
+  /** Normalise raw args to a plain object, never an array or primitive. */
+  function normalizeArgs(raw) {
+    if (raw && typeof raw === 'object' && !Array.isArray(raw)) return raw;
+    return {};
+  }
+
+  /**
+   * Validate a parsed JSON object against the known schema names, then build
+   * the normalised tool-call result.  Returns null if invalid or unknown.
+   */
+  function validateAndBuild(parsed) {
+    if (!parsed || !parsed.name || typeof parsed.name !== 'string') return null;
+    if (validNames && !validNames.has(parsed.name)) return null;
+    return {
+      name: parsed.name,
+      parameters: normalizeArgs(parsed.arguments || parsed.parameters),
+    };
+  }
+
+  const trimmed = response.trim();
+
+  // 1. Pure JSON (grammar-constrained output — primary path)
+  if (trimmed.startsWith('{')) {
+    try {
+      const result = validateAndBuild(JSON.parse(trimmed));
+      if (result) return result;
+    } catch (_) {
+      /* fall through */
     }
+  }
 
-    /**
-     * Validate a parsed JSON object against the known schema names, then build
-     * the normalised tool-call result.  Returns null if invalid or unknown.
-     */
-    function validateAndBuild(parsed) {
-        if (!parsed || !parsed.name || typeof parsed.name !== 'string') return null;
-        if (validNames && !validNames.has(parsed.name)) return null;
-        return {
-            name: parsed.name,
-            parameters: normalizeArgs(parsed.arguments || parsed.parameters),
-        };
+  // 2. JSON wrapped in <tool_call> tags (some models emit these naturally)
+  const tagMatch = trimmed.match(/<tool_call>([\s\S]*?)<\/tool_call>/i);
+  if (tagMatch) {
+    try {
+      return validateAndBuild(JSON.parse(tagMatch[1].trim()));
+    } catch (_) {
+      /* ignore */
     }
+  }
 
-    const trimmed = response.trim();
-
-    // 1. Pure JSON (grammar-constrained output — primary path)
-    if (trimmed.startsWith('{')) {
-        try {
-            const result = validateAndBuild(JSON.parse(trimmed));
-            if (result) return result;
-        } catch (_) { /* fall through */ }
-    }
-
-    // 2. JSON wrapped in <tool_call> tags (some models emit these naturally)
-    const tagMatch = trimmed.match(/<tool_call>([\s\S]*?)<\/tool_call>/i);
-    if (tagMatch) {
-        try {
-            return validateAndBuild(JSON.parse(tagMatch[1].trim()));
-        } catch (_) { /* ignore */ }
-    }
-
-    return null;
+  return null;
 }
-
 
 // Export for CommonJS environments (testing) or make global in browser
 if (typeof module !== 'undefined' && module.exports) {
-    module.exports = {
-        generateToolCallGrammar,
-        buildToolSystemPrompt,
-        detectToolCall,
-    };
+  module.exports = {
+    generateToolCallGrammar,
+    buildToolSystemPrompt,
+    detectToolCall,
+  };
 } else {
-    window.WllamaToolCaller = {
-        generateToolCallGrammar,
-        buildToolSystemPrompt,
-        detectToolCall,
-    };
+  window.WllamaToolCaller = {
+    generateToolCallGrammar,
+    buildToolSystemPrompt,
+    detectToolCall,
+  };
 }

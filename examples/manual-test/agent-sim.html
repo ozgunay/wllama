@@ -1,38 +1,42 @@
-<!DOCTYPE html>
+<!doctype html>
 <html>
-<head>
-  <meta charset="UTF-8" />
-  <title>agentop flow simulation</title>
-</head>
-<body>
-  <h1>agentop manager simulation — two sequential queries</h1>
-  <pre id="log" style="white-space: pre-wrap; font-size: 12px;"></pre>
+  <head>
+    <meta charset="UTF-8" />
+    <title>agentop flow simulation</title>
+  </head>
+  <body>
+    <h1>agentop manager simulation — two sequential queries</h1>
+    <pre id="log" style="white-space: pre-wrap; font-size: 12px"></pre>
 
-  <script src="/examples/manual-test/wllama-tool-caller.js"></script>
-  <script src="/examples/manual-test/wllama-agent-manager.js"></script>
+    <script src="/examples/manual-test/wllama-tool-caller.js"></script>
+    <script src="/examples/manual-test/wllama-agent-manager.js"></script>
 
-  <script type="module">
-    import { Wllama } from '/esm/index.js';
-    window.Wllama = Wllama;
+    <script type="module">
+      import { Wllama } from '/esm/index.js';
+      window.Wllama = Wllama;
 
-    const params = new URLSearchParams(location.search);
-    const nCtx = Number(params.get('ctx') || 4096);
-    const model = params.get('model') || 'qwen3-4b-q4_k_m.gguf';
-    const wdSec = Number(params.get('wd') || 180);
-    const gpuLayers = params.has('gpu') ? Number(params.get('gpu')) : 99;
+      const params = new URLSearchParams(location.search);
+      const nCtx = Number(params.get('ctx') || 4096);
+      const model = params.get('model') || 'qwen3-4b-q4_k_m.gguf';
+      const wdSec = Number(params.get('wd') || 180);
+      const gpuLayers = params.has('gpu') ? Number(params.get('gpu')) : 99;
 
-    const logEl = document.getElementById('log');
-    const results = { nCtx, model, steps: [], done: false, ok: false };
-    window.__TEST_RESULTS = results;
-    function log(step, ok, detail) {
-      const line = `[TEST] ${ok ? 'PASS' : 'FAIL'} ${step}${detail ? ' — ' + String(detail).slice(0, 300) : ''}`;
-      console.log(line);
-      logEl.textContent += line + '\n';
-      results.steps.push({ step, ok, detail: String(detail ?? '').slice(0, 500) });
-    }
+      const logEl = document.getElementById('log');
+      const results = { nCtx, model, steps: [], done: false, ok: false };
+      window.__TEST_RESULTS = results;
+      function log(step, ok, detail) {
+        const line = `[TEST] ${ok ? 'PASS' : 'FAIL'} ${step}${detail ? ' — ' + String(detail).slice(0, 300) : ''}`;
+        console.log(line);
+        logEl.textContent += line + '\n';
+        results.steps.push({
+          step,
+          ok,
+          detail: String(detail ?? '').slice(0, 500),
+        });
+      }
 
-    // ── Same system prompt volume as the data-analysis agent ─────────────
-    const SYSTEM_PROMPT = `ROLE & EXPERTISE:
+      // ── Same system prompt volume as the data-analysis agent ─────────────
+      const SYSTEM_PROMPT = `ROLE & EXPERTISE:
 You are a helpful data analysis assistant with expertise in pandas, numpy, and matplotlib. Your role is to help users understand and analyze CSV data through conversation and tools.
 
 CRITICAL: WHEN TO USE TOOLS VS. WHEN TO JUST ANSWER
@@ -91,7 +95,7 @@ Assistant: ## Correlation Analysis
 ### Key Insights:
 - **petal_length** and **petal_width**: strong positive correlation (0.963)`;
 
-    const SUMMARY_RESULT = `## Dataset Overview
+      const SUMMARY_RESULT = `## Dataset Overview
 Shape: 11208 rows × 17 columns
 
 Columns: date, sales, region, product, sales_channel, customer_segment, marketing_spend, profit_margin, customer_satisfaction, units_sold, deal_size_category, revenue, month, quarter, day_of_week, week_number, is_weekend
@@ -130,7 +134,7 @@ Columns: date, sales, region, product, sales_channel, customer_segment, marketin
 | 75% | 84185.0875 | 2380.0125000000003 | 0.377 | 5.0 | 74.0 | 26365.877882499997 | 10.0 | 4.0 | 43.0 |
 | max | 358172.13 | 2999.74 | 0.5 | 5.0 | 375.0 | 150749.11331999995 | 12.0 | 4.0 | 52.0 |`;
 
-    const CORR_RESULT = `## Correlation Analysis
+      const CORR_RESULT = `## Correlation Analysis
 ### Correlation Matrix:
 |  | sales | marketing_spend | profit_margin | customer_satisfaction | units_sold | revenue |
 | --- | --- | --- | --- | --- | --- | --- |
@@ -145,104 +149,209 @@ Columns: date, sales, region, product, sales_channel, customer_segment, marketin
 - 📈 **sales** and **revenue**: strong positive correlation (0.951)
 - 📈 **units_sold** and **revenue**: strong positive correlation (0.845)`;
 
-    // ── Fake Pyodide bridge with the same tool surface ────────────────────
-    const fakeBridge = {
-      async executeTool(name, args) {
-        console.log('[SIM] executeTool:', name, JSON.stringify(args));
-        if (name === 'get_data_summary') return SUMMARY_RESULT;
-        if (name === 'get_correlation_analysis') return CORR_RESULT;
-        if (name === 'get_column_info') return SUMMARY_RESULT;
-        if (name === 'get_value_counts') return '| Value | Count |\n| --- | --- |\n| North | 2802 |\n| South | 2802 |\n| East | 2802 |\n| West | 2802 |';
-        if (name === 'create_chart') return 'Chart created successfully for column ' + (args.column || '?');
-        return 'ok';
-      },
-    };
-
-    const TOOL_SCHEMAS = [
-      { type: 'function', function: { name: 'get_data_summary', description: 'Get dataset summary: shape, columns, data types, statistics.', parameters: { type: 'object', properties: {}, required: [] } } },
-      { type: 'function', function: { name: 'get_column_info', description: 'Get column info: data types and missing values.', parameters: { type: 'object', properties: {}, required: [] } } },
-      { type: 'function', function: { name: 'get_value_counts', description: 'Get value counts for a specific column.', parameters: { type: 'object', properties: { column: { type: 'string', description: 'The column parameter' } }, required: ['column'] } } },
-      { type: 'function', function: { name: 'create_chart', description: 'Create a chart for a specific column.', parameters: { type: 'object', properties: { column: { type: 'string' }, chart_type: { type: 'string' } }, required: ['column'] } } },
-      { type: 'function', function: { name: 'get_correlation_analysis', description: 'Get correlation analysis for numeric columns.', parameters: { type: 'object', properties: {}, required: [] } } },
-      { type: 'function', function: { name: 'dataframe_to_markdown', description: 'Convert pandas DataFrame to markdown table format.', parameters: { type: 'object', properties: { max_rows: { type: 'integer' } }, required: [] } } },
-    ];
-
-    async function runQuery(mgr, n, q, timeoutSec) {
-      log(`q${n}_start`, true, q);
-      const t0 = performance.now();
-      const watchdog = new Promise((_, rej) =>
-        setTimeout(async () => {
-          try {
-            const proxy = mgr.wllama.proxy;
-            console.log('[PROBE] taskQueue=' + JSON.stringify(proxy.taskQueue.map(t => t.param.verb))
-              + ' resultQueue=' + JSON.stringify(proxy.resultQueue.map(t => t.param.verb))
-              + ' busy=' + proxy.busy);
-            const dbg = await Promise.race([
-              proxy.wllamaDebug(),
-              new Promise(r => setTimeout(() => r('wllamaDebug TIMED OUT'), 5000)),
-            ]);
-            console.log('[PROBE] debug=' + JSON.stringify(dbg).slice(0, 800));
-          } catch (e) { console.log('[PROBE] failed: ' + e.message); }
-          rej(new Error(`WATCHDOG: query ${n} exceeded ${timeoutSec}s`));
-        }, timeoutSec * 1000));
-      const answer = await Promise.race([
-        mgr.processMessage(q, { temperature: 0.7, maxTokens: 1024 }),
-        watchdog,
-      ]);
-      log(`q${n}_done`, true, `${((performance.now() - t0) / 1000).toFixed(1)}s — ${answer.slice(0, 120)}`);
-      return answer;
-    }
-
-    async function main() {
-      // Mirror initializeModel minus the file:// data-URL detour
-      const mgr = new window.WllamaAgentManager();
-      mgr.setToolBridge(fakeBridge);
-      mgr.setToolSchemas(TOOL_SCHEMAS);
-      mgr.setFunctionCallingConfig({ method: 'grammar', tag_format: '<tool_call>', supports_grammar: true, architecture: 'grammar-wllama' });
-      mgr.systemPrompt = SYSTEM_PROMPT;
-
-      const wllama = new window.Wllama({ default: '/src/wasm/wllama.wasm' });
-      wllama.setCompat(null);
-      // Record every completion request so a hang can be replayed exactly.
-      window.__REQS = [];
-      const __orig = wllama.createChatCompletion.bind(wllama);
-      wllama.createChatCompletion = (opts) => {
-        window.__REQS.push({
-          stream: !!opts.stream,
-          tools: !!opts.tools,
-          max_tokens: opts.max_tokens,
-          nMsg: opts.messages?.length,
-          roles: opts.messages?.map(m => m.role).join(','),
-          chars: JSON.stringify(opts.messages || []).length,
-        });
-        console.log('[REQ ' + window.__REQS.length + '] ' + JSON.stringify(window.__REQS[window.__REQS.length - 1]));
-        window.__LAST_MESSAGES = opts.messages;
-        return __orig(opts);
+      // ── Fake Pyodide bridge with the same tool surface ────────────────────
+      const fakeBridge = {
+        async executeTool(name, args) {
+          console.log('[SIM] executeTool:', name, JSON.stringify(args));
+          if (name === 'get_data_summary') return SUMMARY_RESULT;
+          if (name === 'get_correlation_analysis') return CORR_RESULT;
+          if (name === 'get_column_info') return SUMMARY_RESULT;
+          if (name === 'get_value_counts')
+            return '| Value | Count |\n| --- | --- |\n| North | 2802 |\n| South | 2802 |\n| East | 2802 |\n| West | 2802 |';
+          if (name === 'create_chart')
+            return (
+              'Chart created successfully for column ' + (args.column || '?')
+            );
+          return 'ok';
+        },
       };
-      const t0 = performance.now();
-      const resp = await fetch('/.dev-models/' + model);
-      if (!resp.ok) throw new Error('model fetch failed: ' + resp.status);
-      const blob = await resp.blob();
-      await wllama.loadModel([blob], { n_ctx: nCtx, n_gpu_layers: gpuLayers });
-      mgr.wllama = wllama;
-      mgr.isLoaded = true;
-      log('model_load', true, `${((performance.now() - t0) / 1000).toFixed(1)}s n_ctx=${nCtx}`);
 
-      // Phrase q1 so even the 0.6B reliably calls the tool (matches the
-      // user's 4B run where q1 tool-called and produced a huge result).
-      await runQuery(mgr, 1, 'Use the get_data_summary tool to show me a summary of the data', wdSec);
-      await runQuery(mgr, 2, 'What are the correlations between numeric columns?', wdSec);
-      await runQuery(mgr, 3, 'What does correlation mean?', wdSec);
+      const TOOL_SCHEMAS = [
+        {
+          type: 'function',
+          function: {
+            name: 'get_data_summary',
+            description:
+              'Get dataset summary: shape, columns, data types, statistics.',
+            parameters: { type: 'object', properties: {}, required: [] },
+          },
+        },
+        {
+          type: 'function',
+          function: {
+            name: 'get_column_info',
+            description: 'Get column info: data types and missing values.',
+            parameters: { type: 'object', properties: {}, required: [] },
+          },
+        },
+        {
+          type: 'function',
+          function: {
+            name: 'get_value_counts',
+            description: 'Get value counts for a specific column.',
+            parameters: {
+              type: 'object',
+              properties: {
+                column: { type: 'string', description: 'The column parameter' },
+              },
+              required: ['column'],
+            },
+          },
+        },
+        {
+          type: 'function',
+          function: {
+            name: 'create_chart',
+            description: 'Create a chart for a specific column.',
+            parameters: {
+              type: 'object',
+              properties: {
+                column: { type: 'string' },
+                chart_type: { type: 'string' },
+              },
+              required: ['column'],
+            },
+          },
+        },
+        {
+          type: 'function',
+          function: {
+            name: 'get_correlation_analysis',
+            description: 'Get correlation analysis for numeric columns.',
+            parameters: { type: 'object', properties: {}, required: [] },
+          },
+        },
+        {
+          type: 'function',
+          function: {
+            name: 'dataframe_to_markdown',
+            description: 'Convert pandas DataFrame to markdown table format.',
+            parameters: {
+              type: 'object',
+              properties: { max_rows: { type: 'integer' } },
+              required: [],
+            },
+          },
+        },
+      ];
 
-      results.ok = true;
-    }
+      async function runQuery(mgr, n, q, timeoutSec) {
+        log(`q${n}_start`, true, q);
+        const t0 = performance.now();
+        const watchdog = new Promise((_, rej) =>
+          setTimeout(async () => {
+            try {
+              const proxy = mgr.wllama.proxy;
+              console.log(
+                '[PROBE] taskQueue=' +
+                  JSON.stringify(proxy.taskQueue.map((t) => t.param.verb)) +
+                  ' resultQueue=' +
+                  JSON.stringify(proxy.resultQueue.map((t) => t.param.verb)) +
+                  ' busy=' +
+                  proxy.busy
+              );
+              const dbg = await Promise.race([
+                proxy.wllamaDebug(),
+                new Promise((r) =>
+                  setTimeout(() => r('wllamaDebug TIMED OUT'), 5000)
+                ),
+              ]);
+              console.log('[PROBE] debug=' + JSON.stringify(dbg).slice(0, 800));
+            } catch (e) {
+              console.log('[PROBE] failed: ' + e.message);
+            }
+            rej(new Error(`WATCHDOG: query ${n} exceeded ${timeoutSec}s`));
+          }, timeoutSec * 1000)
+        );
+        const answer = await Promise.race([
+          mgr.processMessage(q, { temperature: 0.7, maxTokens: 1024 }),
+          watchdog,
+        ]);
+        log(
+          `q${n}_done`,
+          true,
+          `${((performance.now() - t0) / 1000).toFixed(1)}s — ${answer.slice(0, 120)}`
+        );
+        return answer;
+      }
 
-    main()
-      .catch((err) => log('exception', false, err?.message || String(err)))
-      .finally(() => {
-        results.done = true;
-        console.log('[TEST] DONE ok=' + results.ok);
-      });
-  </script>
-</body>
+      async function main() {
+        // Mirror initializeModel minus the file:// data-URL detour
+        const mgr = new window.WllamaAgentManager();
+        mgr.setToolBridge(fakeBridge);
+        mgr.setToolSchemas(TOOL_SCHEMAS);
+        mgr.setFunctionCallingConfig({
+          method: 'grammar',
+          tag_format: '<tool_call>',
+          supports_grammar: true,
+          architecture: 'grammar-wllama',
+        });
+        mgr.systemPrompt = SYSTEM_PROMPT;
+
+        const wllama = new window.Wllama({ default: '/src/wasm/wllama.wasm' });
+        wllama.setCompat(null);
+        // Record every completion request so a hang can be replayed exactly.
+        window.__REQS = [];
+        const __orig = wllama.createChatCompletion.bind(wllama);
+        wllama.createChatCompletion = (opts) => {
+          window.__REQS.push({
+            stream: !!opts.stream,
+            tools: !!opts.tools,
+            max_tokens: opts.max_tokens,
+            nMsg: opts.messages?.length,
+            roles: opts.messages?.map((m) => m.role).join(','),
+            chars: JSON.stringify(opts.messages || []).length,
+          });
+          console.log(
+            '[REQ ' +
+              window.__REQS.length +
+              '] ' +
+              JSON.stringify(window.__REQS[window.__REQS.length - 1])
+          );
+          window.__LAST_MESSAGES = opts.messages;
+          return __orig(opts);
+        };
+        const t0 = performance.now();
+        const resp = await fetch('/.dev-models/' + model);
+        if (!resp.ok) throw new Error('model fetch failed: ' + resp.status);
+        const blob = await resp.blob();
+        await wllama.loadModel([blob], {
+          n_ctx: nCtx,
+          n_gpu_layers: gpuLayers,
+        });
+        mgr.wllama = wllama;
+        mgr.isLoaded = true;
+        log(
+          'model_load',
+          true,
+          `${((performance.now() - t0) / 1000).toFixed(1)}s n_ctx=${nCtx}`
+        );
+
+        // Phrase q1 so even the 0.6B reliably calls the tool (matches the
+        // user's 4B run where q1 tool-called and produced a huge result).
+        await runQuery(
+          mgr,
+          1,
+          'Use the get_data_summary tool to show me a summary of the data',
+          wdSec
+        );
+        await runQuery(
+          mgr,
+          2,
+          'What are the correlations between numeric columns?',
+          wdSec
+        );
+        await runQuery(mgr, 3, 'What does correlation mean?', wdSec);
+
+        results.ok = true;
+      }
+
+      main()
+        .catch((err) => log('exception', false, err?.message || String(err)))
+        .finally(() => {
+          results.done = true;
+          console.log('[TEST] DONE ok=' + results.ok);
+        });
+    </script>
+  </body>
 </html>
